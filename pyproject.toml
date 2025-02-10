@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "starfish"
+dynamic = ["version"]
+description = 'Starfish Report Generator'
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-3-Clause"
+keywords = []
+authors = [
+  { name = "The President and Fellows of Harvard College", email = "info@neuroinfo.org" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "pandas",
+  "openpyxl",
+  "requests",
+  "binary"
+]
+
+[project.urls]
+Documentation = "https://github.com/harvard-nrg/starfish-report#readme"
+Issues = "https://github.com/harvard-nrg/starfish-report/issues"
+Source = "https://github.com/harvard-nrg/starfish-report"
+
+[project.scripts]
+starfish = "starfish.cli:starfish"
+
+[tool.hatch.version]
+path = "src/starfish/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/starfish tests}"
+
+[tool.coverage.run]
+source_pkgs = ["starfish", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/starfish/__about__.py",
+]
+
+[tool.coverage.paths]
+starfish = ["src/starfish", "*/starfish/src/starfish"]
+tests = ["tests", "*/starfish/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
