@@ -1,3 +1,4 @@
+import re
 import csv
 import sys
 import json
@@ -37,7 +38,6 @@ def starfish():
     zone = sf.find_zone(args.zone)
 
     paths = args.paths if args.paths else zone['paths']
-
     for path in paths:
         if path in args.exclude_paths:
             logger.info(f'skipping excluded path {path}')
@@ -46,12 +46,13 @@ def starfish():
             ans = confirm(f'do you want to query {path} [y or n]: ')
             if ans is False:
                 continue
-        share_size = sf.total_share_size(path, units='TiB')
+        share_size,fs_type = sf.total_share_size(path, units='TiB')
         data = sf.volumes_and_paths(path, depth=args.depth_range)
         rows = list()
         for row in data:
             volume = row['volume']
             full_path = row['full_path']
+            _full_path = re.sub(r'^F\/LABS\/', '', full_path)
             size, size_human = get_size(row)
             if size < size_min:
                 logger.info(f'skipping {row["full_path"]} since {size_human} < {args.size_min}')
@@ -60,6 +61,7 @@ def starfish():
                 'Path': f'{volume}:{full_path}',
                 'Used': size_human,
                 'Total': f'{share_size:.1f}TiB',
+                'Type': fs_type,
                 'Owner': row['username'],
                 'Last Changed': unix2date(row['ct']),
                 'Last Modified': unix2date(row['mt']),
@@ -84,7 +86,7 @@ def starfish():
                 engine='openpyxl',
                 if_sheet_exists=sheet_mode,
                 mode=file_mode) as writer:
-            sheet_name = Path(full_path).parts[0]
+            sheet_name = Path(_full_path).parts[0]
             startrow = 0
             if sheet_name in writer.sheets:
                 startrow = writer.sheets[sheet_name].max_row 
@@ -98,17 +100,17 @@ def starfish():
             )
 
 def newest_ctime(row):
-    if 'rec_aggrs' in row:
+    if 'rec_aggrs' in row and 'max' in row['rec_aggrs']:
         return unix2date(row['rec_aggrs']['max']['ctime'])
     return None
 
 def newest_mtime(row):
-    if 'rec_aggrs' in row:
+    if 'rec_aggrs' in row and 'max' in row['rec_aggrs']:
         return unix2date(row['rec_aggrs']['max']['mtime'])
     return None
 
 def newest_atime(row):
-    if 'rec_aggrs' in row:
+    if 'rec_aggrs' in row and 'max' in row['rec_aggrs']:
         return unix2date(row['rec_aggrs']['max']['atime'])
     return None
 

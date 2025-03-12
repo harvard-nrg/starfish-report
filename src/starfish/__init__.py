@@ -1,3 +1,5 @@
+import os
+import re
 import pwd
 import sys
 import json
@@ -5,11 +7,13 @@ import shutil
 import logging
 import datetime
 import requests
+import subprocess
 import urllib.parse
 from pathlib import Path
 from getpass import getpass
 from functools import lru_cache
 from binary import BinaryUnits, convert_units
+from starfish.common import convert_to_units
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +81,54 @@ class Starfish:
         return r.json()
 
     @lru_cache(maxsize=None)
+    def get_fs_type(self, path):
+        cmd = [
+            'df',
+            '--output=fstype',
+            str(path)
+        ]
+        try:
+            output = subprocess.check_output(
+                cmd,
+                stderr=subprocess.DEVNULL
+            ).decode()
+            fstype = output.split(os.linesep)[1].strip()
+        except subprocess.CalledProcessError as e:
+            raise FileNotFoundError(path)
+        return fstype.upper()
+
+    def disk_usage(self, path, group='cnl', fstype=None):
+        if fstype == 'LUSTRE':
+            cmd = [
+                'lfs',
+                'quota',
+                '-g',
+                group,
+                path
+            ]
+            output = subprocess.check_output(cmd).decode()
+            output = output.split('\n')
+            data = output[3].strip()
+            data = re.split(r'\s+', data)
+            kbytes = int(data[1])
+            nbytes = convert_to_units(f'{kbytes}KB', 'B')
+        else:
+            nbytes, _, _ = shutil.disk_usage(path)
+        return int(nbytes)
+
+    @lru_cache(maxsize=None)
     def total_share_size(self, path, units='TiB'):
         volume, share = path.split(':')
         path_a = Path('/net', volume, 'data', share)
         path_b = Path('/net', volume, 'srv', 'export', share, 'share_root')
+        path_c = Path('/n', volume, re.sub(r'^F\/', '', share))
         nbytes = 0
-        for path in [path_a, path_b]:
+        for path in [path_a, path_b, path_c]:
             try:
-                nbytes, _, _ = shutil.disk_usage(path)
-                logger.info(f'found size of {path}, {nbytes}B')
+                fstype = self.get_fs_type(path)
+                logger.debug(f'{path} is a "{fstype}" file system')
+                nbytes = self.disk_usage(path, fstype=fstype)
+                logger.debug(f'found size of {path}, {nbytes}B')
             except FileNotFoundError:
                 pass
         match units:
@@ -98,7 +141,7 @@ class Starfish:
             case _:
                 raise Exception(f'conversion to {units} not supported')
         total,_ = convert_units(nbytes, BinaryUnits.B, convert_to)
-        return total
+        return total,fstype
 
     @lru_cache(maxsize=None)
     def get_username(self, uid):
