@@ -4,15 +4,16 @@ from binary import BinaryUnits, DecimalUnits, convert_units
 
 def convert_to_units(s, units):
     value, unit = parse_storage_string(s)
+    unit = parse_unit_string(unit)
     new_units = parse_unit_string(units)
     result,_ = convert_units(value, unit, new_units)
     return result
 
 def parse_storage_string(s):
-    match = re.match(r'^(?P<num>\d+)(?P<unit>\w+)$', s.strip())
+    expr = r'^(?P<num>(?:\d+)?(?:\.\d+)?)(?P<unit>\w+)$'
+    match = re.match(expr, s.strip())
     num = float(match.group('num'))
     unit = match.group('unit')
-    unit = parse_unit_string(unit)
     return num, unit
 
 def parse_unit_string(unit):

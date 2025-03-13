@@ -7,7 +7,7 @@ import pandas as pd
 from pathlib import Path
 from starfish import Starfish
 from argparse import ArgumentParser
-from starfish.common import unix2date, confirm, convert_to_units
+from starfish.common import unix2date, confirm, convert_to_units, parse_storage_string
 
 logger = logging.getLogger()
 
@@ -19,10 +19,12 @@ def starfish():
     parser.add_argument('--zone', default='cnl')
     parser.add_argument('--exclude-paths', nargs='+', default=[])
     parser.add_argument('--paths', nargs='+') 
-    parser.add_argument('--depth-range', type=str, default='1-2')
-    parser.add_argument('--size-min', default='0B')
+    parser.add_argument('--limit', type=int, default=100000000)
+    parser.add_argument('--force-units', type=str)
+    parser.add_argument('--depth-range', nargs=2, type=int, default=[0, 2])
+    parser.add_argument('--size-range', nargs=2, type=str, default=['0B', 'max'])
     parser.add_argument('--confirm', action='store_true')
-    parser.add_argument('--output-file', type=Path, required=True)
+    parser.add_argument('--output-file', type=Path)
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
@@ -34,7 +36,9 @@ def starfish():
     sf = Starfish(args.url)
     sf.auth(args.username)
 
-    size_min = convert_to_units(args.size_min, 'B')
+    size_min,size_max = args.size_range
+    min_bytes = convert_to_units(size_min, 'B')
+    usemax = size_max.strip().upper() == 'MAX'
     zone = sf.find_zone(args.zone)
 
     paths = args.paths if args.paths else zone['paths']
@@ -46,23 +50,42 @@ def starfish():
             ans = confirm(f'do you want to query {path} [y or n]: ')
             if ans is False:
                 continue
-        share_size,fs_type = sf.total_share_size(path, units='TiB')
-        data = sf.volumes_and_paths(path, depth=args.depth_range)
+        share_size, share_units, fs_type = sf.total_share_size(
+            path,
+            units=args.force_units
+        )
+        if usemax:
+            size_max = f'{share_size:.2f}TiB'
+        max_bytes = convert_to_units(size_max, 'B')
+        data = sf.volumes_and_paths(
+            path,
+            depth=args.depth_range,
+            limit=args.limit,
+            size=None # (size_min, size_max)
+        )
         rows = list()
         for row in data:
             volume = row['volume']
             full_path = row['full_path']
             _full_path = re.sub(r'^F\/LABS\/', '', full_path)
-            size, size_human = get_size(row)
-            if size < size_min:
-                logger.info(f'skipping {row["full_path"]} since {size_human} < {args.size_min}')
+            size,units,nbytes = get_size(row, force_units=args.force_units)
+            if nbytes < min_bytes or nbytes > max_bytes:
+                logger.debug(f'rejected: size of {full_path} is {size}{units} ' \
+                    f'which is outside of the accepted range of {size_min}-{size_max}')
                 continue
+            logger.info(f'accepted: size of {full_path} is {size}{units} which is ' \
+                f'within the accepted range of {size_min}-{size_max}')
+            owner = row['username']
+            if not owner:
+                owner = str(row['uid'])
             rows.append({
                 'Path': f'{volume}:{full_path}',
-                'Used': size_human,
-                'Total': f'{share_size:.1f}TiB',
+                'Used': round(size, 2),
+                'Used Units': units,
+                'Total': round(share_size, 2),
+                'Total Units': share_units,
                 'Type': fs_type,
-                'Owner': row['username'],
+                'Owner': owner,
                 'Last Changed': unix2date(row['ct']),
                 'Last Modified': unix2date(row['mt']),
                 'Last Accessed': unix2date(row['at']),
@@ -70,6 +93,10 @@ def starfish():
                 'Newest Modified (Tree)': newest_mtime(row),
                 'Newest Accessed (Tree)': newest_atime(row),
             })
+
+        if not args.output_file:
+            logger.info('pass --output-file to save output file')
+            sys.exit()
 
         df = pd.DataFrame(rows)        
         if 'Path' in df:
@@ -114,12 +141,17 @@ def newest_atime(row):
         return unix2date(row['rec_aggrs']['max']['atime'])
     return None
 
-def get_size(row):
+def get_size(row, force_units=None):
     if 'rec_aggrs' in row:
-        size = row['rec_aggrs']['size']
+        size_bytes = row['rec_aggrs']['size']
         size_human = row['rec_aggrs']['size_hum']
     else:
-        size = row['size']
-        size_human = convert_to_units(f'{size}B', 'GiB')
-        size_human = f'{size_human:.1f}GiB'
-    return float(size), size_human
+        size_bytes = row['size']
+        size_human = f'{size_bytes}B'
+
+    if force_units:
+        size_human = convert_to_units(size_human, force_units)
+        size_human = f'{size_human:.2f}{force_units}'
+
+    size_human,units = parse_storage_string(size_human)
+    return  size_human, units, float(size_bytes)
